@@ -8,6 +8,40 @@
 
 `SKILL.md` 是给 AI Agent 读的技能说明，`handler.py` 是可执行实现。
 
+## 能做什么
+
+| 能力 | 返回字段 | 说明 |
+|---|---|---|
+| 积温与阶段 | `growth` | 按作物参数累计有效积温，给出当前生育阶段、下一阶段与进度 |
+| 农事提示 | `growth.actions` | 随阶段变化的当季农事要点 |
+| 收获区间 | `harvest` | 三分位回归给 q10 / q50 / q90，即最早、最可能、最晚三个日期 |
+| 收割建议 | `harvest_advice` | 结合完熟度与未来降雨给出「雨前抢收」「已完熟，准备收割」一类判断 |
+| 三维参数 | `model` | 株高、叶片数、叶色、叶片下垂度、穗大小、干叶比例等，可直接喂渲染器 |
+| 气温获取 | `weather` | 给定经纬度取历史与预报；也可整段注入，供离线复算 |
+
+一行输入即可跑通：作物、播种日期、经纬度。
+
+## 实际运行
+
+水稻、2026-05-01 播种、湖北武汉（经纬度联网取气温），把 `today` 定在 2026-08-28：
+
+```bash
+python -m skills run farm-growth --input payload.json --pretty
+```
+
+![运行输出](docs/run.png)
+
+同一份返回值画出来是这样：积温 1920 / 2100 ℃·d，抽穗期，窗口宽 9 天。
+
+![生长与收获](docs/window.png)
+
+几个可核对的点：
+
+- `weather.history.rows` 为 120，`source` 为 `fetched`，说明气温是真取回来的，不是占位。
+- `harvest.method` 为 `xgboost`，`basis` 写明区间按跨省校准放宽了 4 天；模型缺失时会变成
+  `gdd_fallback` 并注明，不会静默降级。
+- `model.height` 随进度增长，与前端农田页消费的是同一份结构。
+
 ## 文件
 
 | 文件 | 作用 |
@@ -16,6 +50,7 @@
 | `handler.py` | 入口 `run(payload, *, allow_paths=True) -> dict` |
 | `schemas.py` | `FieldInput` / `WeatherRow` / `ManagementInput` / `FarmGrowthInput` |
 | `errors.py` | 技能层异常，由 HTTP 层映射成状态码 |
+| `docs/` | 上面两张运行截图 |
 
 ## 装配到宿主
 
@@ -50,7 +85,7 @@ curl -X POST http://127.0.0.1:8000/api/skills/farm-growth \
   -d '{
     "field": {"crop":"水稻","sow_date":"2026-05-01","area_mu":1.2,
               "province":"湖北省","city":"武汉市","lng":114.3,"lat":30.58},
-    "today": "2026-10-22",
+    "today": "2026-08-28",
     "history": [{"date":"2026-08-01","tmax":32,"tmin":24},
                 {"date":"2026-08-02","tmax":33,"tmin":25}]
   }'
@@ -70,7 +105,7 @@ from skills.farm_growth.handler import run
 
 result = run({
     "field": {"crop": "水稻", "sow_date": "2026-05-01"},
-    "today": "2026-10-22",
+    "today": "2026-08-28",
     "history": [{"date": "2026-08-01", "tmax": 32, "tmin": 24}] * 30,
 })
 print(result["harvest"]["most_likely"])
